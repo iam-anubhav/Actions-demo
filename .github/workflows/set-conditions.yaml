@@ -1,1 +1,28 @@
+name: Set Conditions
 
+on:
+  workflow_call:
+    inputs:
+      run_mode:
+        required: true
+        type: string
+    outputs:
+      enable_deploy:
+        value: ${{ jobs.conditions.outputs.enable_deploy }}
+
+jobs:
+  conditions:
+    runs-on: ubuntu-latest
+    outputs:
+      enable_deploy: ${{ steps.decide.outputs.enable_deploy }}
+    steps:
+      - name: Decide what to run
+        id: decide
+        run: |
+          echo "Run mode: ${{ inputs.run_mode }}"
+
+          if [ "${{ inputs.run_mode }}" = "build-and-deploy" ]; then
+            echo "enable_deploy=true" >> $GITHUB_OUTPUT
+          else
+            echo "enable_deploy=false" >> $GITHUB_OUTPUT
+          fi
