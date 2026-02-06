@@ -1,0 +1,476 @@
+name: CI - Java - Maven - Monorepo
+
+on:
+  workflow_call:
+    inputs:
+
+      apps_to_build:
+        description: 'Application to Build'
+        default: 'AUTO'
+        required: true
+        type: string
+
+      enable_unit_tests:
+        description: 'Enable Unit Tests'
+        default: true
+        required: true
+        type: string
+
+      enable_sonar:
+        description: 'Enable Sonar'
+        default: true
+        required: true
+        type: string
+
+      enable_veracode_sast:
+        description: 'Enable VeraCode SAST'
+        default: true
+        required: true
+        type: string
+
+      enable_veracode_sca:
+        description: 'Enable VeraCode SCA'
+        default: true
+        required: true
+        type: string
+
+      enable_mutation_tests:
+        description: 'Enable Mutation'
+        default: false
+        required: false
+        type: string
+
+      enable_deployment:
+        description: 'Enable Deployment'
+        default: true
+        required: true
+        type: string
+
+      log_level:
+        description: 'Log level'
+        default: 'info'
+        required: true
+        type: string
+
+      runner_group:
+        description: 'Runner group'
+        default: 'concordia-linux-cpu2-ram7gi'
+        required: false
+        type: string
+
+
+permissions:
+  id-token: write
+  contents: read
+  attestations: write
+  actions: read
+  statuses: read
+
+
+env:
+  configuration_repository: ${{ vars.configuration_repository }}
+  configuration_repository_branch: ${{ vars.configuration_repository_branch }}
+  configuration_repository_path: ${{ vars.configuration_repository_path }}
+  environments_files: |
+    ${{ vars.configuration_repository && format('- "./{0}/variables/shared_vars.yaml"', vars.configuration_repository_path) }}
+    ${{ vars.configuration_repository && format('- "./{0}/variables/ci_vars.yaml"', vars.configuration_repository_path) }}
+    - "./.github/variables/shared_vars.yaml"
+    - "./.github/variables/ci_vars.yaml"
+  revup_iebus_secret: ${{ secrets.REVUP_EVENTING_SECRET }}
+
+jobs:
+
+  #+--------------------+
+  #|  Conditions        |-----------------------------------------------------------------------------------------------
+  #+--------------------+
+
+  conditions:
+    name: 'Conditions'
+    uses: ATT-IDP/revup-workflows/.github/workflows/set-conditions.yaml@v3
+    secrets: inherit
+    with:
+      enable_sonar: ${{ inputs.enable_sonar }}
+      enable_veracode_sast: ${{ inputs.enable_veracode_sast }}
+      enable_veracode_sca: ${{ inputs.enable_veracode_sca }}
+      enable_mutation_tests: ${{ inputs.enable_mutation_tests }}
+      enable_unit_tests: ${{ inputs.enable_unit_tests }}
+      enable_deployment: ${{ inputs.enable_deployment }}
+      log_level: ${{ inputs.log_level }}
+
+
+  #+--------------------+
+  #|  Mono Repo         |-----------------------------------------------------------------------------------------------
+  #+--------------------+
+
+  monorepo:
+    name: 'MonoRepo'
+    secrets: inherit
+    uses: ATT-IDP/revup-workflows/.github/workflows/set-monorepo.yaml@v3
+    with:
+      apps_to_build: ${{ inputs.apps_to_build }}
+
+
+  #+--------------------+
+  #|  Build             |-----------------------------------------------------------------------------------------------
+  #+--------------------+
+
+  build:
+    name: 'Build'
+    needs: [ conditions, monorepo ]
+    runs-on: ${{ inputs.runner_group }}
+    outputs:
+      build_version: ${{ steps.build.outputs.build_version }}
+    steps:
+      - name: 'Maven Build'
+        id: build
+        uses: ATT-IDP/revup-maven-build@v3
+        env:
+          TESTCONTAINERS_RYUK_DISABLED: true
+          TESTCONTAINERS_PULL_TIMEOUT: 300
+          TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX: artifact.it.att.com/docker-hub/
+        with:
+          enable_unit_tests: ${{ needs.conditions.outputs.enable_unit_tests }}
+          jfrog_username: ${{ secrets.JFROG_USERNAME }}
+          jfrog_access_token: ${{ secrets.JFROG_ACCESS_TOKEN }}
+          app_id: ${{ secrets.GH_REVUP_APP_ID }}
+          app_private_key: ${{ secrets.GH_REVUP_APP_KEY }}
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          maven_build_extra_opts: ${{ secrets.MAVEN_BUILD_EXTRA_OPTS }}
+          project_list: '--projects ${{ needs.monorepo.outputs.maven_modules }}'
+      
+
+
+  #+--------------------+
+  #|  Sonar             |-----------------------------------------------------------------------------------------------
+  #+--------------------+
+
+  sonar:
+    name: 'Sonar'
+    needs: [ conditions, monorepo, build ]
+    if: needs.conditions.outputs.enable_sonar == 'true'
+    runs-on: ${{ inputs.runner_group }}
+    strategy:
+      max-parallel: 30
+      matrix: ${{ fromJson(needs.monorepo.outputs.glob_matrix) }}
+      fail-fast: false
+    steps:
+      - name: 'Sonar Scan'
+        uses: ATT-IDP/revup-sonar@v3
+        with:
+          jfrog_username: ${{ secrets.JFROG_USERNAME }}
+          jfrog_access_token: ${{ secrets.JFROG_ACCESS_TOKEN }}
+          sonar_token: ${{ secrets.SONAR_TOKEN }}
+          version: ${{ needs.build.outputs.build_version }}
+          service_name: ${{ matrix.project }}
+          service_path: ${{ matrix.sourceDirectory }}
+
+
+  #+--------------------+
+  #|  SAST              |-----------------------------------------------------------------------------------------------
+  #+--------------------+
+
+  veracode-sast:
+    name: 'VeraCode SAST'
+    needs: [conditions, monorepo, build ]
+    if: needs.conditions.outputs.enable_veracode_sast == 'true'
+    runs-on: ${{ inputs.runner_group }}
+    strategy:
+      max-parallel: 30
+      matrix: ${{ fromJson(needs.monorepo.outputs.glob_matrix) }}
+      fail-fast: false
+    steps:
+      - name: 'VeraCode SAST'
+        uses: ATT-IDP/revup-veracode-sast@v3
+        with:
+          veracode_api_id: ${{ secrets.VERACODE_API_ID }}
+          veracode_api_key: ${{ secrets.VERACODE_API_KEY }}
+          version: ${{ needs.build.outputs.build_version }}
+          service_name: ${{ matrix.project}}
+          service_path: ${{ matrix.sourceDirectory }}
+
+  
+  #+--------------------+
+  #|  SCA               |-----------------------------------------------------------------------------------------------
+  #+--------------------+
+
+  veracode-sca:
+    name: 'VeraCode SCA'
+    needs: [conditions, monorepo, build ]
+    if: needs.conditions.outputs.enable_veracode_sca == 'true'
+    runs-on: ${{ inputs.runner_group }}
+    strategy:
+      max-parallel: 30
+      matrix: ${{ fromJson(needs.monorepo.outputs.glob_matrix) }}
+      fail-fast: false
+    steps:
+      - name: 'VeraCode SCA'
+        uses: ATT-IDP/revup-veracode-sca@v3
+        with:
+          jfrog_username: ${{ secrets.JFROG_USERNAME }}
+          jfrog_access_token: ${{ secrets.JFROG_ACCESS_TOKEN }}
+          srcclr_api_token: ${{ secrets.SRCCLR_API_TOKEN }}
+          version: ${{ needs.build.outputs.build_version }}
+          service_name: ${{ matrix.project}}
+          service_path: ${{ matrix.sourceDirectory }}
+
+
+  #+--------------------+
+  #|  Mutation          |-----------------------------------------------------------------------------------------------
+  #+--------------------+
+
+  mutation:
+    name: 'Mutation Tests'
+    needs: [ conditions, monorepo, build ]
+    if: ${{ needs.monorepo.outputs.mutation_matrix && needs.conditions.outputs.enable_mutation_tests == 'true' }}
+    runs-on: ${{ inputs.runner_group }}
+    strategy:
+      max-parallel: 30
+      matrix: ${{ fromJson(needs.monorepo.outputs.mutation_matrix ) }}
+      fail-fast: false
+    steps:
+      - name: 'Run Tests'
+        uses: ATT-IDP/revup-mutation@v3
+        with:
+          jfrog_username: ${{ secrets.JFROG_USERNAME }}
+          jfrog_access_token: ${{ secrets.JFROG_ACCESS_TOKEN }}
+          service_name: ${{ matrix.project }}
+          service_path: ${{ matrix.sourceDirectory }}
+
+
+  #+--------------------+
+  #|  Quality Gate      |-----------------------------------------------------------------------------------------------
+  #+--------------------+
+
+  quality-gate:
+    name: 'Quality Gate'
+    needs: [ conditions, monorepo, build, sonar, veracode-sast, veracode-sca, mutation ]
+    if: |
+      needs.conditions.outputs.enable_quality_gate == 'true' &&
+      (always() &&
+      (needs.sonar.result == 'success' || needs.veracode-sast.result == 'success' || needs.veracode-sca.result  == 'success' || needs.mutation.result  == 'success') &&
+      (needs.sonar.result != 'failure' && needs.veracode-sast.result != 'failure' && needs.veracode-sca.result  != 'failure' && needs.mutation.result  != 'failure'))
+    runs-on: ${{ inputs.runner_group }}
+    strategy:
+      max-parallel: 30
+      matrix: ${{ fromJson(needs.monorepo.outputs.glob_matrix) }}
+      fail-fast: false
+    steps:
+      - name: 'Scan Results'
+        uses: ATT-IDP/revup-quality-gate@v3
+        with:
+          app_id: ${{ secrets.GH_REVUP_APP_ID }}
+          app_private_key: ${{ secrets.GH_REVUP_APP_KEY }}
+          enable_mutation_tests: ${{ needs.monorepo.outputs.mutation_matrix != '' && needs.conditions.outputs.enable_mutation_tests == 'true' }}
+          enable_sonar: ${{ needs.conditions.outputs.enable_sonar }}
+          enable_unit_tests: ${{ needs.conditions.outputs.enable_unit_tests }}
+          enable_veracode_sast: ${{ needs.conditions.outputs.enable_veracode_sast }}
+          enable_veracode_sca: ${{ needs.conditions.outputs.enable_veracode_sca }}
+          service_name: ${{ matrix.project }}
+          service_path: ${{ matrix.sourceDirectory }}
+          sonar_token: ${{ secrets.SONAR_TOKEN }}
+          srcclr_api_token: ${{ secrets.SRCCLR_API_TOKEN }}
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          veracode_api_id: ${{ secrets.VERACODE_API_ID }}
+          veracode_api_key: ${{ secrets.VERACODE_API_KEY }}
+
+
+  #+--------------------+
+  #|  Deploy Artifacts  |---------------------------------------------------------------------------------------------
+  #+--------------------+
+
+  deploy:
+    name: 'Upload Java Artifact to JFrog'
+    needs: [ conditions, monorepo, quality-gate ]
+    if: always() && contains(format(',{0},', needs.conditions.outputs.flow), ',deploy,') &&  needs.conditions.outputs.enable_deployment == 'true'  && needs.quality-gate.result == 'success'
+    runs-on: ${{ inputs.runner_group }}
+    strategy:
+      max-parallel: 30
+      matrix: ${{ fromJson(needs.monorepo.outputs.deploy_matrix) }}
+      fail-fast: false
+    outputs:
+      build_version: ${{ needs.deploy-artifact.outputs.pom_version }}
+    steps:
+      - name: 'Deploy Artifact'
+        id: deploy-artifact
+        uses: ATT-IDP/revup-maven-deploy@v3
+        with:
+          jfrog_username: ${{ secrets.JFROG_USERNAME }}
+          jfrog_access_token: ${{ secrets.JFROG_ACCESS_TOKEN }}
+          app_id: ${{ secrets.BUMP_POM_ID }}
+          app_private_key: ${{ secrets.BUMP_POM_KEY }}
+          gh_token: ${{ secrets.GITHUB_TOKEN }}
+          source_directory: ${{ matrix.sourceDirectory }}
+
+
+  #+--------------------+
+  #|  Archive files     |-----------------------------------------------------------------------------------------------
+  #+--------------------+
+  #  Archive deployment files and upload them to JFrog repository.
+  #  NOTE : Azure Function support only ZIP files
+
+  archive:
+    name: 'Upload Archive to JFrog'
+    if: always() && contains(format(',{0},', needs.conditions.outputs.flow), ',archive,') &&  needs.conditions.outputs.enable_deployment == 'true'  && needs.quality-gate.result == 'success'
+    needs: [ conditions, monorepo, build, quality-gate ]
+    runs-on: ${{ inputs.runner_group }}
+    strategy:
+      max-parallel: 30
+      matrix: ${{ fromJson(needs.monorepo.outputs.deploy_matrix) }}
+      fail-fast: false
+    steps:
+      - name: 'Archive Files'
+        uses: ATT-IDP/revup-archive-upload@v3
+        with:
+          version: ${{ needs.build.outputs.build_version }}
+          jfrog_username: ${{ secrets.JFROG_USERNAME }}
+          jfrog_access_token: ${{ secrets.JFROG_ACCESS_TOKEN }}
+          service_name: ${{ matrix.project }}
+          service_path: ${{ matrix.sourceDirectory }}
+
+
+  #+--------------------+
+  #|  Docker            |-----------------------------------------------------------------------------------------------
+  #+--------------------+
+
+  docker:
+    name: 'Docker'
+    needs: [ conditions, monorepo, build, quality-gate ]
+    if: always() && contains(format(',{0},', needs.conditions.outputs.flow), ',docker,') &&  needs.conditions.outputs.enable_deployment == 'true' && needs.quality-gate.result == 'success'
+    runs-on: ${{ inputs.runner_group }}
+    strategy:
+      max-parallel: 30
+      matrix: ${{ fromJson(needs.monorepo.outputs.deploy_matrix) }}
+      fail-fast: false
+    steps:
+      - name: 'Docker Build and Push'
+        uses: ATT-IDP/revup-docker-build@v3
+        with:
+          version: ${{ needs.build.outputs.build_version }}
+          jfrog_username: ${{ secrets.JFROG_USERNAME }}
+          jfrog_access_token: ${{ secrets.JFROG_ACCESS_TOKEN }}
+          service_name: ${{ matrix.project}}
+          service_path: ${{ matrix.sourceDirectory }}
+
+  #+--------------------+
+  #|  Charts            |-----------------------------------------------------------------------------------------------
+  #+--------------------+
+
+  charts:
+    name: 'Helm Charts'
+    needs: [ conditions, monorepo, build, docker ]
+    if: always() && contains(format(',{0},', needs.conditions.outputs.flow), ',charts,') &&  needs.conditions.outputs.enable_deployment == 'true' && needs.docker.result == 'success'
+    runs-on: ${{ inputs.runner_group }}
+    strategy:
+      max-parallel: 30
+      matrix: ${{ fromJson(needs.monorepo.outputs.deploy_matrix) }}
+      fail-fast: false
+    steps:
+      - name: 'Push Charts'
+        uses: ATT-IDP/revup-helm-charts@v3
+        with:
+          version: ${{ needs.build.outputs.build_version }}
+          jfrog_username: ${{ secrets.JFROG_USERNAME }}
+          jfrog_access_token: ${{ secrets.JFROG_ACCESS_TOKEN }}
+          service_name: ${{ matrix.project}}
+          service_path: ${{ matrix.sourceDirectory }}
+
+
+  #+--------------------+
+  #|  Dora              |-----------------------------------------------------------------------------------------------
+  #+--------------------+
+
+  dora:
+    name: 'Dora Notification'
+    needs: [ conditions, monorepo, build, archive, deploy, docker, charts ]
+    if: |
+      needs.conditions.outputs.enable_deployment == 'true' &&
+      (always() &&
+      ( needs.charts.result != 'failure' && needs.docker.result != 'failure' && needs.archive.result != 'failure' && needs.deploy.result != 'failure' ) &&
+      ( needs.charts.result == 'success' || needs.docker.result == 'success' || needs.archive.result == 'success' || needs.deploy.result == 'success' ))
+    runs-on: ${{ inputs.runner_group }}
+    strategy:
+      max-parallel: 30
+      matrix: ${{ fromJson(needs.monorepo.outputs.glob_matrix) }}
+      fail-fast: false
+    steps:
+      - name: 'Report to Dora'
+        uses: ATT-IDP/revup-teamup-dora@v3
+        with:
+          report_type: 'build'
+          environment_name: 'Dev'
+          version: ${{ needs.deploy.outputs.build_version || needs.build.outputs.build_version}}
+          app_id: ${{ secrets.GH_REVUP_APP_ID }}
+          app_private_key: ${{ secrets.GH_REVUP_APP_KEY }}
+          service_name: ${{ matrix.project }}
+
+
+  #+--------------------+
+  #| Trigger Deployment |-----------------------------------------------------------------------------------------------
+  #+--------------------+
+
+  trigger-deployment:
+    name: 'Trigger Deployment'
+    needs: [ conditions, monorepo, build, deploy, dora ]
+    if: |
+      needs.conditions.outputs.enable_deployment == 'true' &&
+      (always() &&
+      contains(format(',{0},', needs.conditions.outputs.flow), ',trigger-deployment,') &&
+      ( needs.dora.result == 'success' ))
+    runs-on: ${{ inputs.runner_group }}
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - name: 'Tag & Trigger Deployment'
+        uses: ATT-IDP/revup-trigger-deployment@v3
+        with:
+          authentication_id: ${{ secrets.AUTHENTICATION_ID }}
+          version: ${{ needs.deploy.outputs.build_version || needs.build.outputs.build_version}}
+          app_id: ${{ secrets.GH_REVUP_APP_ID }}
+          app_private_key: ${{ secrets.GH_REVUP_APP_KEY }}
+          project_list: '${{ needs.monorepo.outputs.deploy_matrix }}'
+
+
+  #+--------------------+
+  #| Tag                |-----------------------------------------------------------------------------------------------
+  #+--------------------+
+
+  tag:
+    name: 'Git Tag Only'
+    needs: [ conditions, build, deploy, dora ]
+    if: |
+      (always() &&
+      contains(format(',{0},', needs.conditions.outputs.flow), ',tag,') &&
+      ( needs.dora.result == 'success' ))
+    runs-on: ${{ inputs.runner_group }}
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - name: 'Tag'
+        uses: ATT-IDP/revup-trigger-deployment@v3
+        with:
+          authentication_id: ${{ secrets.AUTHENTICATION_ID }}
+          version: ${{ needs.deploy.outputs.build_version || needs.build.outputs.build_version}}
+          app_id: ${{ secrets.GH_REVUP_APP_ID }}
+          app_private_key: ${{ secrets.GH_REVUP_APP_KEY }}
+          tag_only: true
+
+
+  #+--------------------+
+  #| CleanUp            |-----------------------------------------------------------------------------------------------
+  #+--------------------+
+
+  cleanup:
+    name: 'Clean Up'
+    needs: [conditions, monorepo, build, sonar, veracode-sast, veracode-sca, mutation, quality-gate, deploy, archive, docker, charts, dora, trigger-deployment]
+    if: ${{ !failure() && !cancelled() }}
+    runs-on: ${{ inputs.runner_group }}
+    steps:
+      - name: 'Delete Artifact'
+        uses: GeekyEggo/delete-artifact@v5.0.0
+        with:
+          name: |
+            workspace
+            Veracode*
+            *-SCA-Results
