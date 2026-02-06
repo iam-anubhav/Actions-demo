@@ -15,6 +15,6 @@ on:
 jobs:
   run:
     name: Call Reusable Workflow
-    uses: ./.github/workflows/reusable.yml
+    uses: ./.github/workflows/reusable-workflow.yaml
     with:
       run_mode: ${{ github.event.inputs.run_mode }}
