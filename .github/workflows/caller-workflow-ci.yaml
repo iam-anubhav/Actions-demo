@@ -1,1 +1,20 @@
+name: Demo Caller Workflow
 
+on:
+  workflow_dispatch:
+    inputs:
+      run_mode:
+        description: "Select what to run"
+        type: choice
+        required: true
+        default: build-only
+        options:
+          - build-only
+          - build-and-deploy
+
+jobs:
+  run:
+    name: Call Reusable Workflow
+    uses: ./.github/workflows/reusable.yml
+    with:
+      run_mode: ${{ github.event.inputs.run_mode }}
