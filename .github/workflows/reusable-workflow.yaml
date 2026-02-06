@@ -1,1 +1,43 @@
+name: Demo Reusable Workflow
 
+on:
+  workflow_call:
+    inputs:
+      run_mode:
+        description: "Run mode"
+        required: true
+        type: string
+
+jobs:
+
+  # --------------------
+  # Conditions job
+  # --------------------
+  conditions:
+    name: Conditions
+    uses: ./.github/workflows/set-conditions.yml
+    with:
+      run_mode: ${{ inputs.run_mode }}
+
+  # --------------------
+  # Build job (always runs)
+  # --------------------
+  build:
+    name: Build
+    needs: conditions
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build step
+        run: echo "🏗️ Building application"
+
+  # --------------------
+  # Deploy job (conditional)
+  # --------------------
+  deploy:
+    name: Deploy
+    needs: [conditions, build]
+    if: needs.conditions.outputs.enable_deploy == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy step
+        run: echo "🚀 Deploying application"
