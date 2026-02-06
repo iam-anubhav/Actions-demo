@@ -15,7 +15,7 @@ jobs:
   # --------------------
   conditions:
     name: Conditions
-    uses: ./.github/workflows/set-conditions.yml
+    uses: ./.github/workflows/set-conditions.yaml
     with:
       run_mode: ${{ inputs.run_mode }}
 
