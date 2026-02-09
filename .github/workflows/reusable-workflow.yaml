@@ -3,8 +3,16 @@ name: Demo Reusable Workflow
 on:
   workflow_call:
     inputs:
-      run_mode:
-        description: "Run mode"
+      run_build:
+        required: true
+        type: string
+      run_sonar:
+        required: true
+        type: string
+      run_deploy:
+        required: true
+        type: string
+      run_archive:
         required: true
         type: string
 
@@ -17,21 +25,35 @@ jobs:
     name: Conditions
     uses: ./.github/workflows/set-conditions.yaml
     with:
-      run_mode: ${{ inputs.run_mode }}
+      run_build: ${{ inputs.run_build }}
+      run_sonar: ${{ inputs.run_sonar }}
+      run_deploy: ${{ inputs.run_deploy }}
+      run_archive: ${{ inputs.run_archive }}
 
   # --------------------
-  # Build job (always runs)
+  # Build job
   # --------------------
   build:
     name: Build
     needs: conditions
+    if: needs.conditions.outputs.enable_build == 'true'
     runs-on: ubuntu-latest
     steps:
-      - name: Build step
-        run: echo "🏗️ Building application"
+      - run: echo "🏗️ Build job running"
 
   # --------------------
-  # Deploy job (conditional)
+  # Sonar
+  # --------------------
+  sonar:
+    name: Sonar
+    needs: conditions
+    if: needs.conditions.outputs.enable_sonar == 'true'
+    runs-on: ubuntu-latest
+    steps:
+       - run: echo "Sonar job running"
+        
+  # --------------------
+  # Deploy
   # --------------------
   deploy:
     name: Deploy
@@ -41,3 +63,15 @@ jobs:
     steps:
       - name: Deploy step
         run: echo "🚀 Deploying application"
+
+# --------------------
+  # Archive
+  # --------------------
+  archive:
+    name: Archive
+    needs: [conditions, build]
+    if: needs.conditions.outputs.enable_archive == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy step
+        run: echo "Archive Job running"
