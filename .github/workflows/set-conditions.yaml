@@ -39,8 +39,8 @@ jobs:
         run: |
           for job in build sonar deploy archive; do
             input="run_${job}"
-            value="${{ inputs[format('run_{0}, job] }}"
-            if [ "$value" = "true"]; then
+            value="${{ inputs[format('run_{0}', job)] }}"
+            if [ "$value" = "true" ]; then
               echo "enable_${job}=true" >> $GITHUB_OUTPUT
             else
               echo "enable_${job}=false" >> $GITHUB_OUTPUT
