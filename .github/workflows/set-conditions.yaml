@@ -35,9 +35,14 @@ jobs:
       enable_archive: ${{ steps.decide.outputs.enable_archive }}
     steps:
       - name: Evaluate conditions
-        id: set
+        id: eval
         run: |
-          echo "enable_build=${{ inputs.run_build }}" >> $GITHUB_OUTPUT
-          echo "enable_sonar=${{ inputs.run_sonar }}" >> $GITHUB_OUTPUT
-          echo "enable_deploy=${{ inputs.run_deploy }}" >> $GITHUB_OUTPUT
-          echo "enable_archive=${{ inputs.run_archive }}" >> $GITHUB_OUTPUT
+          for job in build sonar deploy archive; do
+            input="run_${job}"
+            value="${{ inputs[format('run_{0}, job] }}"
+            if [ "$value" = "true"]; then
+              echo "enable_${job}=true" >> $GITHUB_OUTPUT
+            else
+              echo "enable_${job}=false" >> $GITHUB_OUTPUT
+            fi
+          done
