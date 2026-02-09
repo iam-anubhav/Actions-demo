@@ -3,18 +3,29 @@ name: Demo Caller Workflow
 on:
   workflow_dispatch:
     inputs:
-      run_mode:
-        description: "Select what to run"
-        type: choice
-        required: true
-        default: build-only
-        options:
-          - build-only
-          - build-and-deploy
-
+      run_build:
+        description: "Run Build job"
+        type: boolean
+        default: true
+      run_sonar:
+        description: "Run Sonar job"
+        type: boolean
+        default: false
+      run_deploy:
+        description: "Run Deploy job"
+        type: boolean
+        default: false
+      run_archive:
+        description: "Run Archive job"
+        type: boolean
+        default: false
 jobs:
   run:
     name: Call Reusable Workflow
     uses: ./.github/workflows/reusable-workflow.yaml
     with:
-      run_mode: ${{ github.event.inputs.run_mode }}
+      run_build: ${{ github.event.inputs.run_build }}
+      run_sonar: ${{ github.event.inputs.run_sonar }}
+      run_deploy: ${{ github.event.inputs.run_deploy }}
+      run_archive: ${{ github.event.inputs.run_archive }}
+      
