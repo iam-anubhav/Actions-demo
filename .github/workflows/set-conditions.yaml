@@ -3,26 +3,41 @@ name: Set Conditions
 on:
   workflow_call:
     inputs:
-      run_mode:
+      run_build:
+        required: true
+        type: string
+      run_sonar:
+        required: true
+        type: string
+      run_deploy:
+        required: true
+        type: string
+      run_archive:
         required: true
         type: string
     outputs:
+      enable_build:
+        value: ${{ jobs.conditions.outputs.enable_build }}
+      enable_sonar:
+        value: ${{ jobs.conditions.outputs.enable_sonar }}
       enable_deploy:
         value: ${{ jobs.conditions.outputs.enable_deploy }}
+      enable_archive:
+        value: ${{ jobs.conditions.outputs.enable_archive }}
 
 jobs:
   conditions:
     runs-on: ubuntu-latest
     outputs:
+      enable_build: ${{ steps.decide.outputs.enable_build }}
+      enable_sonar: ${{ steps.decide.outputs.enable_sonar }}
       enable_deploy: ${{ steps.decide.outputs.enable_deploy }}
+      enable_archive: ${{ steps.decide.outputs.enable_archive }}
     steps:
-      - name: Decide what to run
-        id: decide
+      - name: Evaluate conditions
+        id: set
         run: |
-          echo "Run mode: ${{ inputs.run_mode }}"
-
-          if [ "${{ inputs.run_mode }}" = "build-and-deploy" ]; then
-            echo "enable_deploy=true" >> $GITHUB_OUTPUT
-          else
-            echo "enable_deploy=false" >> $GITHUB_OUTPUT
-          fi
+          echo "enable_build=${{ inputs.run_build }}" >> $GITHUB_OUTPUT
+          echo "enable_sonar=${{ inputs.run_sonar }}" >> $GITHUB_OUTPUT
+          echo "enable_deploy=${{ inputs.run_deploy }}" >> $GITHUB_OUTPUT
+          echo "enable_archive=${{ inputs.run_archive }}" >> $GITHUB_OUTPUT
